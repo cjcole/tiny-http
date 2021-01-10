@@ -5,8 +5,34 @@ use std::str::FromStr;
 
 use chrono::*;
 
+// #[cfg(feature = "serde")]
+use serde::{Serialize, Deserialize};
+
+mod ascii_string {
+    use serde::{de::Error as _, Deserialize, Deserializer, Serialize, Serializer};
+
+    pub fn deserialize<'de, D, T>(deserializer: D) -> Result<T, D::Error>
+    where
+        D: Deserializer<'de>,
+        T: std::str::FromStr,
+    <T as std::str::FromStr>::Err: std::fmt::Display,
+    {
+        String::deserialize(deserializer)?
+            .parse::<T>()
+            .map_err(|e| D::Error::custom(format!("{}", e)))
+    }
+
+    pub fn serialize<S, T>(value: &T, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+        T: std::fmt::Display,
+    {
+        format!("{}", value).serialize(serializer)
+    }
+}
+
 /// Status code of a request or response.
-#[derive(Eq, PartialEq, Clone, Debug, Ord, PartialOrd)]
+#[derive(Eq, PartialEq, Clone, Debug, Ord, PartialOrd, Serialize, Deserialize)]
 pub struct StatusCode(pub u16);
 
 impl StatusCode {
@@ -150,9 +176,10 @@ impl PartialOrd<StatusCode> for u16 {
 }
 
 /// Represents a HTTP header.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Header {
     pub field: HeaderField,
+    #[serde(with = "ascii_string")]
     pub value: AsciiString,
 }
 
@@ -213,8 +240,8 @@ impl Display for Header {
 /// Field of a header (eg. `Content-Type`, `Content-Length`, etc.)
 ///
 /// Comparaison between two `HeaderField`s ignores case.
-#[derive(Debug, Clone)]
-pub struct HeaderField(AsciiString);
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct HeaderField(#[serde(with = "ascii_string")] AsciiString);
 
 impl HeaderField {
     pub fn from_bytes<B>(bytes: B) -> Result<HeaderField, FromAsciiError<B>>
@@ -266,7 +293,7 @@ impl Eq for HeaderField {}
 ///
 /// As per [RFC 7231](https://tools.ietf.org/html/rfc7231#section-4.1) and
 /// [RFC 5789](https://tools.ietf.org/html/rfc5789)
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum Method {
     /// `GET`
     Get,
@@ -296,7 +323,7 @@ pub enum Method {
     Patch,
 
     /// Request methods not standardized by the IETF
-    NonStandard(AsciiString),
+    NonStandard(#[serde(with = "ascii_string")] AsciiString),
 }
 
 impl Method {
@@ -367,7 +394,7 @@ impl PartialEq for Method {
 impl Eq for Method {}
 
 /// HTTP version (usually 1.0 or 1.1).
-#[derive(Debug, Clone, PartialEq, Eq, Ord)]
+#[derive(Debug, Clone, PartialEq, Eq, Ord, Serialize, Deserialize)]
 pub struct HTTPVersion(pub u8, pub u8);
 
 impl Display for HTTPVersion {

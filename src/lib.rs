@@ -99,6 +99,8 @@ extern crate log;
 extern crate ascii;
 extern crate chrono;
 extern crate chunked_transfer;
+// #[cfg(feature = "serde")]
+extern crate serde;
 extern crate url;
 
 #[cfg(feature = "ssl")]

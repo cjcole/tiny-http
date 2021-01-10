@@ -10,6 +10,41 @@ use std::fs::File;
 
 use std::str::FromStr;
 
+use serde::{Serialize, Deserialize};
+
+#[derive(Serialize, Deserialize)]
+pub struct Parameters {
+    status_code: StatusCode,
+    headers: Vec<Header>,
+    data_length: Option<usize>,
+    chunked_threshold: Option<usize>,
+}
+
+impl Parameters {
+    /// Retrieves the current value of the `Response` status code
+    pub fn status_code(&self) -> StatusCode {
+        self.status_code.clone()
+    }
+
+    /// Returns a list of all headers sent by the client.
+    pub fn headers(&self) -> &[Header] {
+        &self.headers
+    }
+
+    /// Retrieves the current value of the `Response` data length
+    pub fn data_length(&self) -> Option<usize> {
+        self.data_length
+    }
+
+    /// The current `Content-Length` threshold for switching over to
+    /// chunked transfer. The default is 32768 bytes. Notice that
+    /// chunked transfer is mutually exclusive with sending a
+    /// `Content-Length` header as per the HTTP spec.
+    pub fn chunked_threshold(&self) -> Option<usize> {
+        self.chunked_threshold
+    }
+}
+
 /// Object representing an HTTP response whose purpose is to be given to a `Request`.
 ///
 /// Some headers cannot be changed. Trying to define the value
@@ -36,10 +71,7 @@ where
     R: Read,
 {
     reader: R,
-    status_code: StatusCode,
-    headers: Vec<Header>,
-    data_length: Option<usize>,
-    chunked_threshold: Option<usize>,
+    parameters: Parameters,
 }
 
 /// A `Response` without a template parameter.
@@ -192,10 +224,12 @@ where
     ) -> Response<R> {
         let mut response = Response {
             reader: data,
-            status_code,
-            headers: Vec::with_capacity(16),
-            data_length,
-            chunked_threshold: None,
+            parameters: Parameters {
+                status_code,
+                headers: Vec::with_capacity(16),
+                data_length,
+                chunked_threshold: None,
+            },
         };
 
         for h in headers {
@@ -217,7 +251,7 @@ where
     /// this threshold, for instance when the request headers indicate
     /// it is wanted or when there is no `Content-Length`.
     pub fn with_chunked_threshold(mut self, length: usize) -> Response<R> {
-        self.chunked_threshold = Some(length);
+        self.parameters.chunked_threshold = Some(length);
         self
     }
 
@@ -226,7 +260,7 @@ where
     /// chunked transfer is mutually exclusive with sending a
     /// `Content-Length` header as per the HTTP spec.
     pub fn chunked_threshold(&self) -> usize {
-        self.chunked_threshold.unwrap_or(32768)
+        self.parameters.chunked_threshold.unwrap_or(32768)
     }
 
     /// Adds a header to the list.
@@ -249,13 +283,13 @@ where
         // if the header is Content-Length, setting the data length
         if header.field.equiv(&"Content-Length") {
             if let Ok(val) = usize::from_str(header.value.as_str()) {
-                self.data_length = Some(val)
+                self.parameters.data_length = Some(val)
             }
 
             return;
         }
 
-        self.headers.push(header);
+        self.parameters.headers.push(header);
     }
 
     /// Returns the same request, but with an additional header.
@@ -277,7 +311,7 @@ where
     where
         S: Into<StatusCode>,
     {
-        self.status_code = code.into();
+        self.parameters.status_code = code.into();
         self
     }
 
@@ -288,10 +322,12 @@ where
     {
         Response {
             reader,
-            headers: self.headers,
-            status_code: self.status_code,
-            data_length,
-            chunked_threshold: self.chunked_threshold,
+            parameters: Parameters {
+                headers: self.parameters.headers,
+                status_code: self.parameters.status_code,
+                data_length,
+                chunked_threshold: self.parameters.chunked_threshold,
+            },
         }
     }
 
@@ -315,29 +351,31 @@ where
         let mut transfer_encoding = Some(choose_transfer_encoding(
             request_headers,
             &http_version,
-            &self.data_length,
+            &self.parameters.data_length,
             false, /* TODO */
             self.chunked_threshold(),
         ));
 
         // add `Date` if not in the headers
         if self
+            .parameters
             .headers
             .iter()
             .find(|h| h.field.equiv(&"Date"))
             .is_none()
         {
-            self.headers.insert(0, build_date_header());
+            self.parameters.headers.insert(0, build_date_header());
         }
 
         // add `Server` if not in the headers
         if self
+            .parameters
             .headers
             .iter()
             .find(|h| h.field.equiv(&"Server"))
             .is_none()
         {
-            self.headers.insert(
+            self.parameters.headers.insert(
                 0,
                 Header::from_bytes(&b"Server"[..], &b"tiny-http (Rust)"[..]).unwrap(),
             );
@@ -345,11 +383,11 @@ where
 
         // handling upgrade
         if let Some(upgrade) = upgrade {
-            self.headers.insert(
+            self.parameters.headers.insert(
                 0,
                 Header::from_bytes(&b"Upgrade"[..], upgrade.as_bytes()).unwrap(),
             );
-            self.headers.insert(
+            self.parameters.headers.insert(
                 0,
                 Header::from_bytes(&b"Connection"[..], &b"upgrade"[..]).unwrap(),
             );
@@ -359,7 +397,7 @@ where
         // if the transfer encoding is identity, the content length must be known ; therefore if
         // we don't know it, we buffer the entire response first here
         // while this is an expensive operation, it is only ever needed for clients using HTTP 1.0
-        let (mut reader, data_length) = match (self.data_length, transfer_encoding) {
+        let (mut reader, data_length) = match (self.parameters.data_length, transfer_encoding) {
             (Some(l), _) => (Box::new(self.reader) as Box<dyn Read>, Some(l)),
             (None, Some(TransferEncoding::Identity)) => {
                 let mut buf = Vec::new();
@@ -372,7 +410,7 @@ where
 
         // checking whether to ignore the body of the response
         let do_not_send_body = do_not_send_body
-            || match self.status_code.0 {
+            || match self.parameters.status_code.0 {
                 // status code 1xx, 204 and 304 MUST not include a body
                 100..=199 | 204 | 304 => true,
                 _ => false,
@@ -381,6 +419,7 @@ where
         // preparing headers for transfer
         match transfer_encoding {
             Some(TransferEncoding::Chunked) => self
+                .parameters
                 .headers
                 .push(Header::from_bytes(&b"Transfer-Encoding"[..], &b"chunked"[..]).unwrap()),
 
@@ -388,7 +427,7 @@ where
                 assert!(data_length.is_some());
                 let data_length = data_length.unwrap();
 
-                self.headers.push(
+                self.parameters.headers.push(
                     Header::from_bytes(
                         &b"Content-Length"[..],
                         format!("{}", data_length).as_bytes(),
@@ -404,8 +443,8 @@ where
         write_message_header(
             writer.by_ref(),
             &http_version,
-            &self.status_code,
-            &self.headers,
+            &self.parameters.status_code,
+            &self.parameters.headers,
         )?;
 
         // sending the body
@@ -436,12 +475,12 @@ where
 
     /// Retrieves the current value of the `Response` status code
     pub fn status_code(&self) -> StatusCode {
-        self.status_code.clone()
+        self.parameters.status_code.clone()
     }
 
     /// Retrieves the current value of the `Response` data length
     pub fn data_length(&self) -> Option<usize> {
-        self.data_length
+        self.parameters.data_length
     }
 }
 
@@ -453,11 +492,17 @@ where
     pub fn boxed(self) -> ResponseBox {
         Response {
             reader: Box::new(self.reader) as Box<dyn Read + Send>,
-            status_code: self.status_code,
-            headers: self.headers,
-            data_length: self.data_length,
-            chunked_threshold: self.chunked_threshold,
+            parameters: Parameters {
+                status_code: self.parameters.status_code,
+                headers: self.parameters.headers,
+                data_length: self.parameters.data_length,
+                chunked_threshold: self.parameters.chunked_threshold,
+            },
         }
+    }
+
+    pub fn parameters(&self) -> &Parameters {
+        &self.parameters
     }
 }
 
@@ -541,10 +586,12 @@ impl Clone for Response<io::Empty> {
     fn clone(&self) -> Response<io::Empty> {
         Response {
             reader: io::empty(),
-            status_code: self.status_code.clone(),
-            headers: self.headers.clone(),
-            data_length: self.data_length,
-            chunked_threshold: self.chunked_threshold,
+            parameters: Parameters {
+                status_code: self.parameters.status_code.clone(),
+                headers: self.parameters.headers.clone(),
+                data_length: self.parameters.data_length,
+                chunked_threshold: self.parameters.chunked_threshold,
+            },
         }
     }
 }
