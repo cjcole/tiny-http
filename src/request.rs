@@ -12,7 +12,7 @@ use serde::{Serialize, Deserialize};
 use util::EqualReader;
 use {HTTPVersion, Header, Method, Response, StatusCode};
 
-#[derive(Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Parameters {
     remote_addr: SocketAddr,
 

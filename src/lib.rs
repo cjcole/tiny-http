@@ -123,8 +123,8 @@ use client::ClientConnection;
 use util::MessagesQueue;
 
 pub use common::{HTTPVersion, Header, HeaderField, Method, StatusCode};
-pub use request::{ReadWrite, Request};
-pub use response::{Response, ResponseBox};
+pub use request::{Parameters as RequestParameters, ReadWrite, Request};
+pub use response::{Parameters as ResponseParameters, Response, ResponseBox};
 
 mod client;
 mod common;

@@ -12,7 +12,7 @@ use std::str::FromStr;
 
 use serde::{Serialize, Deserialize};
 
-#[derive(Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Parameters {
     status_code: StatusCode,
     headers: Vec<Header>,
@@ -244,6 +244,21 @@ where
         }
 
         response
+    }
+
+    /// Split a response into a reader and its associated parameters.
+    /// This may be useful when serializing a response.
+    pub fn split(self) -> (R, Parameters) {
+        (self.reader, self.parameters)
+    }
+
+    /// Join a reader with associated parameters, creating a response.
+    /// This may be useful when deserializing a response.
+    pub fn join(reader: R, parameters: Parameters) -> Response<R> {
+        Response {
+            reader: reader,
+            parameters: parameters,
+        }
     }
 
     /// Set a threshold for `Content-Length` where we chose chunked
