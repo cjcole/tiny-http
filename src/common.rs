@@ -239,7 +239,7 @@ impl Display for Header {
 
 /// Field of a header (eg. `Content-Type`, `Content-Length`, etc.)
 ///
-/// Comparaison between two `HeaderField`s ignores case.
+/// Comparison between two `HeaderField`s ignores case.
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct HeaderField(#[serde(with = "ascii_string")] AsciiString);
 
@@ -266,9 +266,13 @@ impl FromStr for HeaderField {
     type Err = ();
 
     fn from_str(s: &str) -> Result<HeaderField, ()> {
-        AsciiString::from_ascii(s.trim())
-            .map(HeaderField)
-            .map_err(|_| ())
+        if s.contains(char::is_whitespace) {
+            Err(())
+        } else {
+            AsciiString::from_ascii(s)
+                .map(HeaderField)
+                .map_err(|_| ())
+        }
     }
 }
 
@@ -487,5 +491,19 @@ mod test {
 
         assert!(header.field.equiv(&"time"));
         assert!(header.value.as_str() == "20: 34");
+    }
+
+    // This tests reslstance to RUSTSEC-2020-0031: "HTTP Request smuggling
+    // through malformed Transfer Encoding headers"
+    // (https://rustsec.org/advisories/RUSTSEC-2020-0031.html).
+    #[test]
+    fn test_strict_headers() {
+        assert!("Transfer-Encoding : chunked".parse::<Header>().is_err());
+        assert!(" Transfer-Encoding: chunked".parse::<Header>().is_err());
+        assert!("Transfer Encoding: chunked".parse::<Header>().is_err());
+        assert!(" Transfer\tEncoding : chunked".parse::<Header>().is_err());
+        assert!("Transfer-Encoding: chunked".parse::<Header>().is_ok());
+        assert!("Transfer-Encoding: chunked ".parse::<Header>().is_ok());
+        assert!("Transfer-Encoding:   chunked ".parse::<Header>().is_ok());
     }
 }
